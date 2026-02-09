@@ -247,16 +247,19 @@ resource "aws_iam_role" "dr_ec2_ssm_role" {
 }
 
 # SSM 필수 (Managed Instance 등록용)
-resource "aws_iam_role_policy_attachment" "dr_ec2_ssm_core" {
+# SSM Full Access (SSM 리소스 관리용)
+# ECR 접근 권한
+resource "aws_iam_role_policy_attachment" "dr_ec2_policy_attachments" {
+  for_each = toset([
+    "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
+    "arn:aws:iam::aws:policy/AmazonSSMFullAccess",
+    "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly",
+  ])
+
   role       = aws_iam_role.dr_ec2_ssm_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+  policy_arn = each.value
 }
 
-# SSM Full Access (SSM 리소스 관리용)
-resource "aws_iam_role_policy_attachment" "dr_ec2_ssm_full" {
-  role       = aws_iam_role.dr_ec2_ssm_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMFullAccess"
-}
 resource "aws_iam_instance_profile" "dr_ec2_ssm_profile" {
   name = "dr-ec2-ssm-profile"
   role = aws_iam_role.dr_ec2_ssm_role.name
