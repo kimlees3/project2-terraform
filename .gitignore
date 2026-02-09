@@ -1,28 +1,113 @@
-# Terraform
+#############################################
+# Terraform Global Ignore (Full Version)
+# 모든 서브디렉토리의 Terraform 파일 포함
+#############################################
+
+# --- Terraform working directory ---
 .terraform/
+.terraform/**/*
+
+# --- Terraform state files ---
+terraform.tfstate
+terraform.tfstate.*
 *.tfstate
 *.tfstate.*
+
+# --- Terraform crash logs ---
 crash.log
-crash.*.log
-*.tfvars
-*.tfvars.json
+crash.*
+**/crash.log
+**/crash.*
+
+# lock file
+.terraform.lock.hcl
+**/.terraform.lock.hcl
+
+# --- Backup files created by Terraform ---
+*.backup
+*.tfstate.backup
+**/*.backup
+**/*.tfstate.backup
+
+# --- Override files ---
 override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json
-.terraformrc
-terraform.rc
-# Terraform
-.terraform/
-*.tfstate
-*.tfstate.*
-crash.log
-crash.*.log
+**/override.tf
+**/override.tf.json
+**/*_override.tf
+**/*_override.tf.json
+
+# --- Sensitive variable files (민감 정보 포함 가능성) ---
 *.tfvars
 *.tfvars.json
-override.tf
-override.tf.json
-*_override.tf
-*_override.tf.json
-.terraformrc
+*.auto.tfvars
+**/*.tfvars
+**/*.tfvars.json
+**/*.auto.tfvars
+
+# --- Secret / credential files ---
+secrets.*
+*.pem
+*.key
+*.crt
+*.p12
+*.jks
+*.pfx
+*.kubeconfig
+**/secrets.*
+**/*.pem
+**/*.key
+**/*.crt
+**/*.p12
+**/*.jks
+**/*.pfx
+**/*.kubeconfig
+
+# --- Local environment & config files ---
 terraform.rc
+.terraformrc
+local.env
+.env
+.env.*
+**/terraform.rc
+**/.terraformrc
+**/local.env
+**/.env
+**/.env.*
+
+# --- Plan files (terraform plan 저장 시) ---
+*.tfplan
+**/*.tfplan
+
+# --- IDE & System ---
+# VS Code
+.vscode/
+**/.vscode/
+
+# IntelliJ / JetBrains
+.idea/
+**/.idea/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Windows
+Thumbs.db
+**/Thumbs.db
+
+# Vim swap
+*.swp
+*.swo
+**/*.swp
+**/*.swo
+
+# Logs
+*.log
+**/*.log
+
+#############################################
+# End of Terraform Global .gitignore
+#############################################
