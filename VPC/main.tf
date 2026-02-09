@@ -18,10 +18,21 @@ resource "aws_subnet" "drpubSN" {
   vpc_id                  = aws_vpc.dr.id
   cidr_block              = var.public_subnet_cidr
   availability_zone       = var.az
-  map_public_ip_on_launch = true  # 퍼블릭 IPv4 자동할당
+  map_public_ip_on_launch = true # 퍼블릭 IPv4 자동할당
 
   tags = {
     Name = "drpubSN"
+  }
+}
+# ✅ 추가: ALB 요건 충족용 퍼블릭 서브넷(2번째 AZ)
+resource "aws_subnet" "drpubSN2" {
+  vpc_id                  = aws_vpc.dr.id
+  cidr_block              = var.public_subnet_cidr2
+  availability_zone       = var.az2
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name = "drpubSN2"
   }
 }
 
@@ -90,6 +101,11 @@ resource "aws_route_table_association" "public_assoc" {
   subnet_id      = aws_subnet.drpubSN.id
   route_table_id = aws_route_table.public_rt.id
 }
+# ✅ 추가: 2번째 퍼블릭 서브넷도 public_rt에 연결
+resource "aws_route_table_association" "public_assoc2" {
+  subnet_id      = aws_subnet.drpubSN2.id
+  route_table_id = aws_route_table.public_rt.id
+}
 
 # Private RT: 0.0.0.0/0 -> drnat
 resource "aws_route_table" "private_rt" {
@@ -126,28 +142,19 @@ resource "aws_key_pair" "drkeypair" {
 }
 
 # drSG 생성
-resource "aws_security_group" "drSG" {
-  name        = "drSG"
-  description = "Allow TLS inbound traffic and all outbound traffic"
+# ✅ ALB용 SG (인터넷 -> ALB 80/443)
+resource "aws_security_group" "alb_sg" {
+  name        = "dr-alb-sg"
+  description = "ALB SG: allow inbound 80/443 from Internet"
   vpc_id      = aws_vpc.dr.id
 
   tags = {
-    Name = "drSG"
+    Name = "dr-alb-sg"
   }
 }
-# SSH 22 
-resource "aws_vpc_security_group_ingress_rule" "dr_ec2_ssh" {
-  security_group_id = aws_security_group.drSG.id
-  cidr_ipv4         = "0.0.0.0/0"
-  from_port         = 22
-  to_port           = 22
-  ip_protocol       = "tcp"
-  description       = "SSH from admin IP"
-}
 
-# HTTP 80 from anywhere
-resource "aws_vpc_security_group_ingress_rule" "dr_ec2_http" {
-  security_group_id = aws_security_group.drSG.id
+resource "aws_vpc_security_group_ingress_rule" "alb_http" {
+  security_group_id = aws_security_group.alb_sg.id
   cidr_ipv4         = "0.0.0.0/0"
   from_port         = 80
   to_port           = 80
@@ -155,15 +162,61 @@ resource "aws_vpc_security_group_ingress_rule" "dr_ec2_http" {
   description       = "HTTP from Internet"
 }
 
-# HTTPS 443 from anywhere
-resource "aws_vpc_security_group_ingress_rule" "dr_ec2_https" {
-  security_group_id = aws_security_group.drSG.id
+resource "aws_vpc_security_group_ingress_rule" "alb_https" {
+  security_group_id = aws_security_group.alb_sg.id
   cidr_ipv4         = "0.0.0.0/0"
   from_port         = 443
   to_port           = 443
   ip_protocol       = "tcp"
   description       = "HTTPS from Internet"
 }
+
+resource "aws_vpc_security_group_egress_rule" "alb_all_out" {
+  security_group_id = aws_security_group.alb_sg.id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1"
+}
+
+# ✅ EC2용 SG (인터넷 직접 접근 금지 / ALB만 허용)
+resource "aws_security_group" "drSG" {
+  name        = "drSG"
+  description = "EC2 SG: allow from ALB only"
+  vpc_id      = aws_vpc.dr.id
+
+  tags = {
+    Name = "drSG"
+  }
+}
+
+# SSH 22 (비용/편의상 유지. 정석은 SSM만 쓰고 닫는 걸 추천)
+resource "aws_vpc_security_group_ingress_rule" "dr_ec2_ssh" {
+  security_group_id = aws_security_group.drSG.id
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 22
+  to_port           = 22
+  ip_protocol       = "tcp"
+  description       = "SSH (recommend restrict to your IP or use SSM only)"
+}
+
+# ✅ 변경: EC2의 80/443은 'ALB SG'에서 오는 트래픽만 허용
+resource "aws_vpc_security_group_ingress_rule" "dr_ec2_from_alb_http" {
+  security_group_id            = aws_security_group.drSG.id
+  referenced_security_group_id = aws_security_group.alb_sg.id
+  from_port                    = 80
+  to_port                      = 80
+  ip_protocol                  = "tcp"
+  description                  = "HTTP from ALB only"
+}
+
+# (선택) EC2가 443으로 직접 서비스한다면 열기. 보통은 필요 없음.
+# resource "aws_vpc_security_group_ingress_rule" "dr_ec2_from_alb_https" {
+#   security_group_id            = aws_security_group.drSG.id
+#   referenced_security_group_id = aws_security_group.alb_sg.id
+#   from_port                    = 443
+#   to_port                      = 443
+#   ip_protocol                  = "tcp"
+#   description                  = "HTTPS from ALB only"
+# }
 
 # ICMP (ping) from admin IP only
 # Note: for ICMP, use from_port/to_port = -1 to allow all ICMP types/codes.
@@ -204,15 +257,15 @@ data "aws_ami" "amazon_linux_2023" {
 }
 
 resource "aws_instance" "drEC2" {
-  ami           = data.aws_ami.amazon_linux_2023.id
-  instance_type = "t3.large"  # or t3.xlarge
-  subnet_id = aws_subnet.drprivSN.id
-  key_name = aws_key_pair.drkeypair.key_name
+  ami                    = data.aws_ami.amazon_linux_2023.id
+  instance_type          = "t3.large" # or t3.xlarge
+  subnet_id              = aws_subnet.drprivSN.id
+  key_name               = aws_key_pair.drkeypair.key_name
   vpc_security_group_ids = [aws_security_group.drSG.id]
-  iam_instance_profile = aws_iam_instance_profile.dr_ec2_ssm_profile.name
+  iam_instance_profile   = aws_iam_instance_profile.dr_ec2_ssm_profile.name
 
 
- # user_data 변경 시 재생성 (원하면 false로)
+  # user_data 변경 시 재생성 (원하면 false로)
   user_data_replace_on_change = true
   user_data_base64            = filebase64("${path.module}/user_data_k3s.sh")
 
@@ -243,6 +296,60 @@ resource "aws_iam_role" "dr_ec2_ssm_role" {
 
   tags = {
     Name = "dr-ec2-ssm-role"
+  }
+}
+############################################
+# ✅ ALB + Target Group + Listener (정석 진입점)
+############################################
+
+resource "aws_lb" "dr_alb" {
+  name               = "dr-alb"
+  load_balancer_type = "application"
+  internal           = false
+
+  # ✅ ALB는 "서로 다른 AZ 2개 서브넷" 필요
+  subnets         = [aws_subnet.drpubSN.id, aws_subnet.drpubSN2.id]
+  security_groups = [aws_security_group.alb_sg.id]
+
+  tags = {
+    Name = "dr-alb"
+  }
+}
+
+resource "aws_lb_target_group" "dr_tg" {
+  name     = "dr-tg"
+  port     = 80
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.dr.id
+
+  health_check {
+    path                = "/health"
+    matcher             = "200-399"
+    interval            = 30
+    timeout             = 5
+    healthy_threshold   = 2
+    unhealthy_threshold = 2
+  }
+
+  tags = {
+    Name = "dr-tg"
+  }
+}
+
+resource "aws_lb_target_group_attachment" "dr_ec2_attach" {
+  target_group_arn = aws_lb_target_group.dr_tg.arn
+  target_id        = aws_instance.drEC2.id
+  port             = 80
+}
+
+resource "aws_lb_listener" "dr_http" {
+  load_balancer_arn = aws_lb.dr_alb.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.dr_tg.arn
   }
 }
 
