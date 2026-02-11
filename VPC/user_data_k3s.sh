@@ -33,6 +33,21 @@ for i in $(seq 1 240); do
   sleep 2
 done
 
+echo "[4.5/6] force traefik NodePort fixed (30130/31942)"
+# destroy/apply 시 traefik NodePort가 랜덤으로 바뀌면 ALB TargetGroup 포트(30130)와 mismatch가 발생함
+# 그래서 traefik 서비스를 NodePort로 고정한다.
+kubectl -n kube-system patch svc traefik --type='merge' -p '{
+  "spec": {
+    "type": "NodePort",
+    "externalTrafficPolicy": "Local",
+    "ports": [
+      {"name":"web","port":80,"protocol":"TCP","targetPort":"web","nodePort":30130},
+      {"name":"websecure","port":443,"protocol":"TCP","targetPort":"websecure","nodePort":31942}
+    ]
+  }
+}'
+kubectl -n kube-system get svc traefik -o wide || true
+
 echo "[5/6] apply k8s manifests (healthz + justic-web + ingress)"
 kubectl apply -f - <<'YAML'
 apiVersion: v1
@@ -44,9 +59,9 @@ data:
   default.conf: |
     server {
       listen 80;
-      location = /health { 
-      add_header Content-Type text/plain;
-      return 200 "ok\n";
+      location ^~ /health {
+        add_header Content-Type text/plain;
+        return 200 "ok\n";
       }
       location / { return 404 "not found\n"; }
     }
@@ -125,9 +140,6 @@ spec:
   ports:
   - port: 80
     targetPort: 8080
-
-# (기존 YAML 중 Ingress 부분만 이걸로 교체)
-
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -142,7 +154,7 @@ spec:
   - http:
       paths:
       - path: /health
-        pathType: Exact
+        pathType: Prefix
         backend:
           service:
             name: healthz-svc

@@ -198,15 +198,15 @@ resource "aws_vpc_security_group_ingress_rule" "dr_ec2_ssh" {
   description       = "SSH (recommend restrict to your IP or use SSM only)"
 }
 
-# ✅ 변경: EC2의 80/443은 'ALB SG'에서 오는 트래픽만 허용
 resource "aws_vpc_security_group_ingress_rule" "dr_ec2_from_alb_http" {
   security_group_id            = aws_security_group.drSG.id
   referenced_security_group_id = aws_security_group.alb_sg.id
-  from_port                    = 80
-  to_port                      = 80
+  from_port                    = 30130
+  to_port                      = 30130
   ip_protocol                  = "tcp"
-  description                  = "HTTP from ALB only"
+  description                  = "HTTP(NodePort 30130) from ALB only"
 }
+
 
 # (선택) EC2가 443으로 직접 서비스한다면 열기. 보통은 필요 없음.
 # resource "aws_vpc_security_group_ingress_rule" "dr_ec2_from_alb_https" {
@@ -318,7 +318,7 @@ resource "aws_lb" "dr_alb" {
 
 resource "aws_lb_target_group" "dr_tg" {
   name     = "dr-tg"
-  port     = 80
+  port     = 30130
   protocol = "HTTP"
   vpc_id   = aws_vpc.dr.id
 
@@ -339,7 +339,7 @@ resource "aws_lb_target_group" "dr_tg" {
 resource "aws_lb_target_group_attachment" "dr_ec2_attach" {
   target_group_arn = aws_lb_target_group.dr_tg.arn
   target_id        = aws_instance.drEC2.id
-  port             = 80
+  port             = 30130
 }
 
 resource "aws_lb_listener" "dr_http" {
