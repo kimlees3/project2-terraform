@@ -16,22 +16,24 @@ output "sns_topic_arn_use1" {
 
 output "seoul_alarm_count" {
   value = (
-    length(aws_cloudwatch_metric_alarm.seoul_tg_healthy_low)
-    + length(aws_cloudwatch_metric_alarm.seoul_target_5xx)
-    + length(aws_cloudwatch_metric_alarm.seoul_latency_p90)
+    try(length(aws_cloudwatch_metric_alarm.seoul_tg_healthy_low), 0)
+    + try(length(aws_cloudwatch_metric_alarm.seoul_target_5xx), 0)
+    + try(length(aws_cloudwatch_metric_alarm.seoul_latency_p90), 0)
   )
 }
 
 output "sin_alarm_count" {
   value = (
-    length(aws_cloudwatch_metric_alarm.sin_tg_healthy_low)
-    + length(aws_cloudwatch_metric_alarm.sin_target_5xx)
-    + length(aws_cloudwatch_metric_alarm.sin_latency_p90)
-    + length(aws_cloudwatch_metric_alarm.dr_ec2_status_failed)
-    + length(aws_cloudwatch_metric_alarm.dr_rds_replica_lag)
+    length(keys(local.sin_map))
+    + length(keys(local.dr_ec2_map))
+    + length(keys(local.dr_rds_map))
+    + length(keys(local.r53_hc_map))
+    + try(length(aws_cloudwatch_metric_alarm.ci_node_cpu_high), 0)
+    + try(length(aws_cloudwatch_metric_alarm.ci_node_mem_high), 0)
+    + try(length(aws_cloudwatch_metric_alarm.ci_node_disk_p90_high), 0)
   )
 }
 
 output "route53_alarm_count" {
-  value = length(aws_cloudwatch_metric_alarm.route53_down)
+  value = try(length(aws_cloudwatch_metric_alarm.route53_down), 0)
 }

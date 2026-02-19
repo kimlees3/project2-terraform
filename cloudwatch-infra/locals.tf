@@ -4,17 +4,18 @@ locals {
   # ------------------------------------------------------------
   # 1) remote_state 우선 적용 (없으면 var 사용)
   # ------------------------------------------------------------
-  # DR(싱가폴) targets는 VPC 스택 outputs.targets_sin을 우선 사용
-  targets_sin_effective = try(data.terraform_remote_state.dr_vpc.outputs.targets_sin, var.targets_sin)
-
-  # 서울도 추후 remote_state를 붙이면 try()로 동일하게 만들면 됨
-  targets_seoul_effective = var.targets_seoul
-
-  # DR EC2도 VPC outputs에서 우선 사용
+  # var.targets_sin 이 비어있지 않으면 var를 우선 사용
+  targets_sin_effective = length(var.targets_sin) > 0 ? var.targets_sin : try(data.terraform_remote_state.dr_vpc.outputs.targets_sin, [])
+  targets_seoul_effective       = var.targets_seoul
   dr_ec2_instance_ids_effective = try(data.terraform_remote_state.dr_vpc.outputs.dr_ec2_instance_ids, var.dr_ec2_instance_ids)
 
+  # ✅ Container Insights (VPC outputs 있으면 우선)
+  ci_cluster_name_effective = try(data.terraform_remote_state.dr_vpc.outputs.ci_cluster_name, var.ci_cluster_name)
+  ci_namespace_effective    = try(data.terraform_remote_state.dr_vpc.outputs.ci_namespace, var.ci_namespace)
+  ci_service_name_effective = try(data.terraform_remote_state.dr_vpc.outputs.ci_service_name, var.ci_service_name)
+
   # ------------------------------------------------------------
-  # 2) name 중복 방지용 map (반드시 effective를 써야 함)
+  # 2) name 중복 방지용 map
   # ------------------------------------------------------------
   seoul_map = { for t in local.targets_seoul_effective : t.name => t }
   sin_map   = { for t in local.targets_sin_effective : t.name => t }
@@ -24,8 +25,7 @@ locals {
   r53_hc_map = { for id in var.route53_health_check_ids : id => id }
 
   # ------------------------------------------------------------
-  # 3) Dashboard 위젯 자동 생성 (effective 기준)
-  #    ALB/TG별로 "Healthy/Unhealthy + Target5XX + Latency p90" 3개씩
+  # 3) Dashboard 위젯 자동 생성 (서울)
   # ------------------------------------------------------------
   seoul_widgets = flatten([
     for i, t in local.targets_seoul_effective : [
@@ -81,6 +81,9 @@ locals {
     ]
   ])
 
+  # ------------------------------------------------------------
+  # 4) Dashboard 위젯 자동 생성 (싱가폴)
+  # ------------------------------------------------------------
   sin_widgets = flatten([
     for i, t in local.targets_sin_effective : [
       {
@@ -136,7 +139,7 @@ locals {
   ])
 
   # ------------------------------------------------------------
-  # 4) 선택 위젯: DR EC2 (effective 기준)
+  # 5) DR EC2 위젯
   # ------------------------------------------------------------
   dr_ec2_widgets = flatten([
     for i, id in local.dr_ec2_instance_ids_effective : [
@@ -176,8 +179,7 @@ locals {
   ])
 
   # ------------------------------------------------------------
-  # 5) 선택 위젯: DR RDS ReplicaLag
-  #    ⚠️ 여기 y 계산식은 줄바꿈 + 때문에 깨지는 경우가 있어서 한 줄로 고정
+  # 6) DR RDS ReplicaLag 위젯
   # ------------------------------------------------------------
   dr_rds_widgets = [
     for j, rid in var.dr_rds_replica_ids : {
@@ -199,8 +201,7 @@ locals {
   ]
 
   # ------------------------------------------------------------
-  # 6) 선택 위젯: Route53 HealthCheckStatus
-  #    ⚠️ 여기도 y 계산식 한 줄로 고정
+  # 7) Route53 HealthCheckStatus 위젯
   # ------------------------------------------------------------
   route53_widgets = length(var.route53_health_check_ids) == 0 ? [] : [
     {
@@ -222,13 +223,64 @@ locals {
   ]
 
   # ------------------------------------------------------------
-  # 7) 최종 위젯 합치기
+  # 8) ✅ ContainerInsights: 노드 기반 위젯
+  # ------------------------------------------------------------
+  ci_widgets_y = (((length(local.targets_seoul_effective) + length(local.targets_sin_effective)) * 6)
+    + (length(local.dr_ec2_instance_ids_effective) * 6)
+    + (length(var.dr_rds_replica_ids) * 6)
+    + (length(var.route53_health_check_ids) == 0 ? 0 : 6)
+  )
+
+  ci_widgets = [
+    {
+      type   = "metric"
+      x      = 0
+      y      = local.ci_widgets_y
+      width  = 12
+      height = 6
+      properties = {
+        region  = "ap-southeast-1"
+        title   = "k3s ${local.ci_cluster_name_effective} - node_cpu_utilization (%)"
+        view    = "timeSeries"
+        stacked = false
+        period  = 60
+        stat    = "Average"
+        metrics = [
+          ["ContainerInsights", "node_cpu_utilization", "ClusterName", local.ci_cluster_name_effective, { stat = "Average", period = 60 }]
+        ]
+        legend = { position = "bottom" }
+      }
+    },
+    {
+      type   = "metric"
+      x      = 12
+      y      = local.ci_widgets_y
+      width  = 12
+      height = 6
+      properties = {
+        region  = "ap-southeast-1"
+        title   = "k3s ${local.ci_cluster_name_effective} - node_memory_utilization (%)"
+        view    = "timeSeries"
+        stacked = false
+        period  = 60
+        stat    = "Average"
+        metrics = [
+          ["ContainerInsights", "node_memory_utilization", "ClusterName", local.ci_cluster_name_effective, { stat = "Average", period = 60 }]
+        ]
+        legend = { position = "bottom" }
+      }
+    }
+  ]
+
+  # ------------------------------------------------------------
+  # 9) 최종 위젯 합치기
   # ------------------------------------------------------------
   all_widgets = concat(
     local.seoul_widgets,
     local.sin_widgets,
     local.dr_ec2_widgets,
     local.dr_rds_widgets,
-    local.route53_widgets
+    local.route53_widgets,
+    var.enable_container_insights ? local.ci_widgets : []
   )
 }

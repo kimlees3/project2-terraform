@@ -8,7 +8,6 @@ locals {
 # 서울 ALB/TG 알람 (for_each)
 ############################
 
-# 1) HealthyHostCount < 1
 resource "aws_cloudwatch_metric_alarm" "seoul_tg_healthy_low" {
   for_each = local.seoul_map
 
@@ -31,7 +30,6 @@ resource "aws_cloudwatch_metric_alarm" "seoul_tg_healthy_low" {
   alarm_actions = local.alarm_actions_seoul
 }
 
-# 2) Target 5XX > threshold (Sum/5m)
 resource "aws_cloudwatch_metric_alarm" "seoul_target_5xx" {
   for_each = local.seoul_map
 
@@ -54,7 +52,6 @@ resource "aws_cloudwatch_metric_alarm" "seoul_target_5xx" {
   alarm_actions = local.alarm_actions_seoul
 }
 
-# 3) Latency p90 > threshold (3분 지속)
 resource "aws_cloudwatch_metric_alarm" "seoul_latency_p90" {
   for_each = local.seoul_map
 
@@ -78,7 +75,7 @@ resource "aws_cloudwatch_metric_alarm" "seoul_latency_p90" {
 }
 
 ############################
-# 싱가폴 ALB/TG 알람 (for_each, provider alias)
+# 싱가폴 ALB/TG 알람 (provider alias)
 ############################
 
 resource "aws_cloudwatch_metric_alarm" "sin_tg_healthy_low" {
@@ -151,10 +148,9 @@ resource "aws_cloudwatch_metric_alarm" "sin_latency_p90" {
 }
 
 ############################
-# (선택) DR EC2 / RDS / Route53 알람
+# DR EC2 / RDS / Route53
 ############################
 
-# DR EC2: StatusCheckFailed > 0
 resource "aws_cloudwatch_metric_alarm" "dr_ec2_status_failed" {
   provider = aws.sin
   for_each = local.dr_ec2_map
@@ -177,7 +173,6 @@ resource "aws_cloudwatch_metric_alarm" "dr_ec2_status_failed" {
   alarm_actions = local.alarm_actions_sin
 }
 
-# DR RDS: ReplicaLag > threshold (10분 지속)
 resource "aws_cloudwatch_metric_alarm" "dr_rds_replica_lag" {
   provider = aws.sin
   for_each = local.dr_rds_map
@@ -200,7 +195,6 @@ resource "aws_cloudwatch_metric_alarm" "dr_rds_replica_lag" {
   alarm_actions = local.alarm_actions_sin
 }
 
-# Route53 HealthCheckStatus < 1
 resource "aws_cloudwatch_metric_alarm" "route53_down" {
   provider = aws.use1
   for_each = local.r53_hc_map
@@ -221,4 +215,78 @@ resource "aws_cloudwatch_metric_alarm" "route53_down" {
   }
 
   alarm_actions = local.alarm_actions_use1
+}
+
+############################
+# ✅ ContainerInsights: Node 기반 알람 (SEARCH 없음, 영구 안정)
+############################
+
+resource "aws_cloudwatch_metric_alarm" "ci_node_cpu_high" {
+  provider = aws.sin
+  count    = var.enable_container_insights ? 1 : 0
+
+  alarm_name          = "${var.project}-ci-${local.ci_cluster_name_effective}-node-cpu>${var.threshold_ci_node_cpu_utilization}%"
+  namespace           = "ContainerInsights"
+  metric_name         = "node_cpu_utilization"
+  statistic           = "Average"
+  period              = 60
+  evaluation_periods  = 5
+  datapoints_to_alarm = 5
+  threshold           = var.threshold_ci_node_cpu_utilization
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    ClusterName = local.ci_cluster_name_effective
+  }
+
+  alarm_actions = local.alarm_actions_sin
+  ok_actions    = local.alarm_actions_sin
+}
+
+resource "aws_cloudwatch_metric_alarm" "ci_node_mem_high" {
+  provider = aws.sin
+  count    = var.enable_container_insights ? 1 : 0
+
+  alarm_name          = "${var.project}-ci-${local.ci_cluster_name_effective}-node-mem>${var.threshold_ci_node_memory_utilization}%"
+  namespace           = "ContainerInsights"
+  metric_name         = "node_memory_utilization"
+  statistic           = "Average"
+  period              = 60
+  evaluation_periods  = 5
+  datapoints_to_alarm = 5
+  threshold           = var.threshold_ci_node_memory_utilization
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    ClusterName = local.ci_cluster_name_effective
+  }
+
+  alarm_actions = local.alarm_actions_sin
+  ok_actions    = local.alarm_actions_sin
+}
+
+# (옵션) 디스크 p90 알람: 메트릭이 없으면 만들지 말 것(필요 시 사용)
+resource "aws_cloudwatch_metric_alarm" "ci_node_disk_p90_high" {
+  provider = aws.sin
+  count    = var.enable_container_insights ? 1 : 0
+
+  alarm_name          = "${var.project}-ci-${local.ci_cluster_name_effective}-node-disk-p90>${var.threshold_ci_node_filesystem_utilization_p90}%"
+  namespace           = "ContainerInsights"
+  metric_name         = "node_filesystem_utilization"
+  extended_statistic  = "p90"
+  period              = 60
+  evaluation_periods  = 5
+  datapoints_to_alarm = 5
+  threshold           = var.threshold_ci_node_filesystem_utilization_p90
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    ClusterName = local.ci_cluster_name_effective
+  }
+
+  alarm_actions = local.alarm_actions_sin
+  ok_actions    = local.alarm_actions_sin
 }

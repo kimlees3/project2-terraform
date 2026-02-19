@@ -4,18 +4,22 @@ set -euxo pipefail
 # 로그 남기기 (문제 생기면 여기 보면 됨)
 exec > >(tee /var/log/user-data-k3s.log | logger -t user-data -s 2>/dev/console) 2>&1
 
-echo "[1/6] base packages"
+AWS_REGION="${aws_region}"
+CLUSTER_NAME="${k3s_cluster_name}"
+ENABLE_CONTAINER_INSIGHTS="${enable_container_insights}"
+
+echo "[1/7] base packages"
 dnf -y update || true
 dnf -y install curl ca-certificates || true
 
-echo "[2/6] install k3s (single node: server + agent)"
+echo "[2/7] install k3s (single node: server + agent)"
 curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server --write-kubeconfig-mode 644" sh -
 
 systemctl enable --now k3s
 
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 
-echo "[3/6] wait node Ready"
+echo "[3/7] wait node Ready"
 for i in $(seq 1 180); do
   if kubectl get nodes 2>/dev/null | awk 'NR==2{print $2}' | grep -q "Ready"; then
     break
@@ -23,17 +27,17 @@ for i in $(seq 1 180); do
   sleep 2
 done
 
-echo "[4/6] wait traefik Ready"
+echo "[4/7] wait traefik Ready"
 # k3s 기본 traefik 배포가 완전히 Ready 된 뒤에 Ingress 적용해야 안정적
 for i in $(seq 1 240); do
   READY="$(kubectl -n kube-system get deploy traefik -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "")"
-  if [ "${READY}" = "1" ]; then
+  if [ "$${READY}" = "1" ]; then
     break
   fi
   sleep 2
 done
 
-echo "[4.5/6] force traefik NodePort fixed (30130/31942)"
+echo "[4.5/7] force traefik NodePort fixed (30130/31942)"
 # destroy/apply 시 traefik NodePort가 랜덤으로 바뀌면 ALB TargetGroup 포트(30130)와 mismatch가 발생함
 # 그래서 traefik 서비스를 NodePort로 고정한다.
 kubectl -n kube-system patch svc traefik --type='merge' -p '{
@@ -48,7 +52,7 @@ kubectl -n kube-system patch svc traefik --type='merge' -p '{
 }'
 kubectl -n kube-system get svc traefik -o wide || true
 
-echo "[5/6] apply k8s manifests (healthz + justic-web + ingress)"
+echo "[5/7] apply k8s manifests (healthz + justic-web + ingress)"
 kubectl apply -f - <<'YAML'
 apiVersion: v1
 kind: ConfigMap
@@ -182,7 +186,22 @@ spec:
               number: 80
 YAML
 
-echo "[6/6] quick checks"
+if [ "$${ENABLE_CONTAINER_INSIGHTS}" = "true" ] || [ "$${ENABLE_CONTAINER_INSIGHTS}" = "1" ]; then
+  echo "[6/7] install CloudWatch Container Insights (cwagent + fluent-bit)"
+  kubectl create namespace amazon-cloudwatch 2>/dev/null || true
+
+  curl -fsSL \
+    https://raw.githubusercontent.com/aws-samples/amazon-cloudwatch-container-insights/latest/k8s-deployment-manifest-templates/deployment-mode/daemonset/container-insights-monitoring/quickstart/cwagent-fluent-bit-quickstart.yaml \
+  | sed "s/{{cluster_name}}/$${CLUSTER_NAME}/g; s/{{region_name}}/$${AWS_REGION}/g" \
+  | kubectl apply -f -
+
+  kubectl -n amazon-cloudwatch get pods -o wide || true
+else
+  echo "[6/7] skip Container Insights (ENABLE_CONTAINER_INSIGHTS=false)"
+fi
+
+echo "[7/7] quick checks"
 kubectl get nodes -o wide || true
 kubectl get pods,svc,ingress -A || true
+
 echo "DONE"

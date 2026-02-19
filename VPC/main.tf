@@ -126,23 +126,18 @@ resource "aws_route_table_association" "private_assoc" {
   route_table_id = aws_route_table.private_rt.id
 }
 
-
 ############################################
 # EC2 생성
 # drkeypair 생성
 # drSG 생성
 # EC2 생성
 ############################################
-
-# drkeypair 생성
 
 resource "aws_key_pair" "drkeypair" {
   key_name   = "drkeypair"
   public_key = file("~/.ssh/id_ed25519.pub")
 }
 
-# drSG 생성
-# ✅ ALB용 SG (인터넷 -> ALB 80/443)
 resource "aws_security_group" "alb_sg" {
   name        = "dr-alb-sg"
   description = "ALB SG: allow inbound 80/443 from Internet"
@@ -177,7 +172,6 @@ resource "aws_vpc_security_group_egress_rule" "alb_all_out" {
   ip_protocol       = "-1"
 }
 
-# ✅ EC2용 SG (인터넷 직접 접근 금지 / ALB만 허용)
 resource "aws_security_group" "drSG" {
   name        = "drSG"
   description = "EC2 SG: allow from ALB only"
@@ -188,7 +182,6 @@ resource "aws_security_group" "drSG" {
   }
 }
 
-# SSH 22 (비용/편의상 유지. 정석은 SSM만 쓰고 닫는 걸 추천)
 resource "aws_vpc_security_group_ingress_rule" "dr_ec2_ssh" {
   security_group_id = aws_security_group.drSG.id
   cidr_ipv4         = "0.0.0.0/0"
@@ -207,19 +200,6 @@ resource "aws_vpc_security_group_ingress_rule" "dr_ec2_from_alb_http" {
   description                  = "HTTP(NodePort 30130) from ALB only"
 }
 
-
-# (선택) EC2가 443으로 직접 서비스한다면 열기. 보통은 필요 없음.
-# resource "aws_vpc_security_group_ingress_rule" "dr_ec2_from_alb_https" {
-#   security_group_id            = aws_security_group.drSG.id
-#   referenced_security_group_id = aws_security_group.alb_sg.id
-#   from_port                    = 443
-#   to_port                      = 443
-#   ip_protocol                  = "tcp"
-#   description                  = "HTTPS from ALB only"
-# }
-
-# ICMP (ping) from admin IP only
-# Note: for ICMP, use from_port/to_port = -1 to allow all ICMP types/codes.
 resource "aws_vpc_security_group_ingress_rule" "dr_ec2_icmp" {
   security_group_id = aws_security_group.drSG.id
   cidr_ipv4         = "0.0.0.0/0"
@@ -232,14 +212,9 @@ resource "aws_vpc_security_group_ingress_rule" "dr_ec2_icmp" {
 resource "aws_vpc_security_group_egress_rule" "allow_all_traffic_ipv4" {
   security_group_id = aws_security_group.drSG.id
   cidr_ipv4         = "0.0.0.0/0"
-  ip_protocol       = "-1" # semantically equivalent to all ports
+  ip_protocol       = "-1"
 }
 
-
-
-
-
-# EC2 생성
 data "aws_ami" "amazon_linux_2023" {
   most_recent = true
 
@@ -258,24 +233,23 @@ data "aws_ami" "amazon_linux_2023" {
 
 resource "aws_instance" "drEC2" {
   ami                    = data.aws_ami.amazon_linux_2023.id
-  instance_type          = "t3.large" # or t3.xlarge
+  instance_type          = "t3.large"
   subnet_id              = aws_subnet.drprivSN.id
   key_name               = aws_key_pair.drkeypair.key_name
   vpc_security_group_ids = [aws_security_group.drSG.id]
   iam_instance_profile   = aws_iam_instance_profile.dr_ec2_ssm_profile.name
 
-
-  # user_data 변경 시 재생성 (원하면 false로)
   user_data_replace_on_change = true
-  user_data_base64            = filebase64("${path.module}/user_data_k3s.sh")
+  user_data_base64 = base64encode(templatefile("${path.module}/user_data_k3s.sh", {
+    aws_region                = var.aws_region
+    k3s_cluster_name          = var.k3s_cluster_name
+    enable_container_insights = var.enable_container_insights
+  }))
 
   tags = {
     Name = "drEC2"
   }
 }
-
-
-# EC2에 붙일 롤 정의 (SSM)만 일단 추가
 
 resource "aws_iam_role" "dr_ec2_ssm_role" {
   name = "dr-ec2-ssm-role"
@@ -298,8 +272,9 @@ resource "aws_iam_role" "dr_ec2_ssm_role" {
     Name = "dr-ec2-ssm-role"
   }
 }
+
 ############################################
-# ✅ ALB + Target Group + Listener (정석 진입점)
+# ✅ ALB + Target Group + Listener
 ############################################
 
 resource "aws_lb" "dr_alb" {
@@ -307,7 +282,6 @@ resource "aws_lb" "dr_alb" {
   load_balancer_type = "application"
   internal           = false
 
-  # ✅ ALB는 "서로 다른 AZ 2개 서브넷" 필요
   subnets         = [aws_subnet.drpubSN.id, aws_subnet.drpubSN2.id]
   security_groups = [aws_security_group.alb_sg.id]
 
@@ -353,14 +327,12 @@ resource "aws_lb_listener" "dr_http" {
   }
 }
 
-# SSM 필수 (Managed Instance 등록용)
-# SSM Full Access (SSM 리소스 관리용)
-# ECR 접근 권한
 resource "aws_iam_role_policy_attachment" "dr_ec2_policy_attachments" {
   for_each = toset([
     "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
     "arn:aws:iam::aws:policy/AmazonSSMFullAccess",
     "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly",
+    "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy",
   ])
 
   role       = aws_iam_role.dr_ec2_ssm_role.name
