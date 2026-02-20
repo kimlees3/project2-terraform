@@ -40,6 +40,23 @@ variable "dr_rds_replica_ids" {
   default     = []
 }
 
+############################################
+# 서울 VPC (ROSA 제외) EC2 / RDS 모니터링
+############################################
+
+variable "seoul_ec2_instance_ids" {
+  description = "서울(ap-northeast-2) EC2 인스턴스 ID 목록. 비워도 됨."
+  type        = list(string)
+  default     = []
+}
+
+variable "seoul_rds_instance_ids" {
+  description = "서울(ap-northeast-2) RDS DBInstanceIdentifier 목록. 비워도 됨."
+  type        = list(string)
+  default     = []
+}
+
+
 variable "route53_health_check_ids" {
   description = "Route53 HealthCheckId 목록(메인/DR). 비워도 됨."
   type        = list(string)
@@ -118,4 +135,10 @@ variable "threshold_ci_node_filesystem_utilization_p90" {
   description = "(%) ContainerInsights node_filesystem_utilization p90 임계치"
   type        = number
   default     = 85
+}
+
+variable "threshold_rds_cpu_utilization" {
+  description = "RDS CPUUtilization 알람 임계치(%)"
+  type        = number
+  default     = 80
 }

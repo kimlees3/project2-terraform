@@ -75,6 +75,52 @@ resource "aws_cloudwatch_metric_alarm" "seoul_latency_p90" {
 }
 
 ############################
+# 서울 EC2 / RDS 알람 (ROSA 제외)
+############################
+
+resource "aws_cloudwatch_metric_alarm" "seoul_ec2_status_failed" {
+  for_each = local.seoul_ec2_map
+
+  alarm_name          = "${var.project}-seoul-ec2-${each.key}-statuscheckfailed>0"
+  namespace           = "AWS/EC2"
+  metric_name         = "StatusCheckFailed"
+  statistic           = "Maximum"
+  period              = 60
+  evaluation_periods  = 2
+  datapoints_to_alarm = 2
+  threshold           = 0
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "breaching"
+
+  dimensions = {
+    InstanceId = each.value
+  }
+
+  alarm_actions = local.alarm_actions_seoul
+}
+
+resource "aws_cloudwatch_metric_alarm" "seoul_rds_cpu_high" {
+  for_each = local.seoul_rds_map
+
+  alarm_name          = "${var.project}-seoul-rds-${each.key}-cpu>${var.threshold_rds_cpu_utilization}%"
+  namespace           = "AWS/RDS"
+  metric_name         = "CPUUtilization"
+  statistic           = "Average"
+  period              = 60
+  evaluation_periods  = 5
+  datapoints_to_alarm = 5
+  threshold           = var.threshold_rds_cpu_utilization
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    DBInstanceIdentifier = each.value
+  }
+
+  alarm_actions = local.alarm_actions_seoul
+}
+
+############################
 # 싱가폴 ALB/TG 알람 (provider alias)
 ############################
 
